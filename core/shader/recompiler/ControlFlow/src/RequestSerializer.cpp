@@ -5,7 +5,7 @@ namespace ShaderRecompiler {
 
 namespace {
 
-constexpr std::uint32_t CurrentVersion = 32u;
+constexpr std::uint32_t CurrentVersion = 33u;
 constexpr std::uint32_t DrawParameterBlockTag = 0x31504447u;
 constexpr std::uint32_t LocalFeatures = 22u;
 constexpr char kBase64Alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
@@ -564,6 +564,7 @@ void writeTessellationConfiguration(Writer& writer, const TessellationConfigurat
     writer.WriteU32(configuration.patchesPerGroup);
     writer.WriteU32(configuration.primitiveGroupSize);
     writer.WriteBool(configuration.breakAtInstance);
+    writer.WriteBool(configuration.mergedHull);
 }
 
 TessellationConfiguration readTessellationConfiguration(Reader& reader, std::uint32_t version, std::uint32_t local) {
@@ -580,6 +581,7 @@ TessellationConfiguration readTessellationConfiguration(Reader& reader, std::uin
     if (version >= 22u || local >= 18u) configuration.patchesPerGroup = reader.ReadU32();
     if (version >= 24u || local >= 19u) configuration.primitiveGroupSize = reader.ReadU32();
     if (version >= 24u || local >= 21u) configuration.breakAtInstance = reader.ReadBool();
+    if (version >= 33u) configuration.mergedHull = reader.ReadBool();
     return configuration;
 }
 
@@ -896,7 +898,7 @@ DeserializedRequest RequestSerializer::Deserialize(std::string_view text) const 
     if (version < 1u || version > CurrentVersion) throw std::runtime_error("unsupported recompile request serialization version");
     if (version >= CurrentVersion) return deserialize(decoded, version, LocalFeatures, false);
     // The previous current version (31) took the current path; it only lacks the single-workgroup flag.
-    if (version == 31u) return deserialize(decoded, version, LocalFeatures, false);
+    if (version == 31u || version == 32u) return deserialize(decoded, version, LocalFeatures, false);
     if (version == 24u || version == 26u || version == 30u) {
         try {
             return deserialize(decoded, version == 26u ? 25u : version == 30u ? 29u : version, LocalFeatures, true);

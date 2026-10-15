@@ -206,11 +206,11 @@ int main() {
             Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
             Require(request.target.float16DenormPreserve == preserve);
             auto upgraded = bytes;
-            upgraded[4] = 32u;
+            upgraded[4] = 33u;
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 258u, {0u, 0u, 0u});
             if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
             if (fixture.pixel) upgraded.insert(upgraded.begin() + 282u, 40u, 0u);
-            if (fixture.tessellation) upgraded.insert(upgraded.end() - 35u, 5u, 0u);
+            if (fixture.tessellation) upgraded.insert(upgraded.end() - 35u, 6u, 0u);
             upgraded.insert(upgraded.end(), sizeof(std::uint64_t), 0u);
             Require(serializer.Serialize(request) == EncodeBase64(upgraded));
             auto truncated = bytes;
@@ -246,11 +246,11 @@ int main() {
                     layerRejected = std::string_view(error.what()) == "RequestSerializer: truncated data";
                 }
                 Require(layerRejected);
-                layered[4] = 32u;
+                layered[4] = 33u;
                 layered.insert(layered.begin() + 259u, {0u, 0u});
                 InsertPixelDefaultsAfterFrontFace(layered);
                 layered.insert(layered.begin() + 282u, 40u, 0u);
-                if (fixture.tessellation) layered.insert(layered.end() - 35u, 5u, 0u);
+                if (fixture.tessellation) layered.insert(layered.end() - 35u, 6u, 0u);
                 layered.insert(layered.end(), sizeof(std::uint64_t), 0u);
                 Require(serializer.Serialize(layerReplay.request) == EncodeBase64(layered));
             }
@@ -272,7 +272,7 @@ int main() {
             Require(replay.request.context.pixel->rasterPrimitive == ShaderRecompiler::RasterPrimitive::Rectangle);
             Require(replay.request.context.vertex->paClVsOutCntl == 0x00050a05u);
             Require(replay.request.target.float16DenormPreserve == preserve);
-            bytes[4] = 32u;
+            bytes[4] = 33u;
             bytes.insert(bytes.begin() + 259u, {0u, 0u});
             InsertPixelDefaultsAfterFrontFace(bytes);
             bytes.insert(bytes.begin() + 282u, 40u, 0u);
@@ -397,28 +397,44 @@ int main() {
                 Require(request.graphics->draw.indexAddress == 0xabcdef3400u && request.graphics->draw.indexCount == 57u && request.graphics->draw.indexElementBytes == 4u && request.graphics->draw.instanceCount == 9u);
                 Require(request.target.float16DenormPreserve == preserve);
                 auto upgraded = bytes;
-                upgraded[4] = 32u;
+                upgraded[4] = 33u;
                 if (fixture.pixel) upgraded.insert(upgraded.begin() + 259u, {0u, 0u});
                 if (fixture.pixel) InsertPixelDefaultsAfterFrontFace(upgraded);
                 if (fixture.pixel) upgraded.insert(upgraded.begin() + 282u, 40u, 0u);
+                if (fixture.tessellation) upgraded.insert(upgraded.end() - 35u, 1u, 0u);
                 upgraded.insert(upgraded.end(), sizeof(std::uint64_t), 0u);
                 Require(serializer.Serialize(request) == EncodeBase64(upgraded));
+                auto previous32 = upgraded;
+                previous32[4] = 32u;
+                if (fixture.tessellation) previous32.erase(previous32.end() - 44u);
+                const auto replay32 = serializer.Deserialize(EncodeBase64(previous32));
+                Require(serializer.Serialize(replay32.request) == EncodeBase64(upgraded));
+                if (fixture.tessellation) {
+                    auto merged = request;
+                    merged.graphics->tessellation->mergedHull = true;
+                    const auto mergedReplay = serializer.Deserialize(serializer.Serialize(merged));
+                    Require(mergedReplay.request.graphics->tessellation->mergedHull);
+                }
+
                 if (fixture.pixel) {
                     auto blended = upgraded;
                     blended[282] = 1u;
                     auto local26 = blended;
                     local26[4] = 26u;
+                    if (fixture.tessellation) local26.erase(local26.end() - 44u);
                     local26.erase(local26.end() - 8, local26.end());
                     local26.erase(local26.begin() + 260u, local26.begin() + 282u);
                     Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(local26)).request) == EncodeBase64(blended));
                     auto local30 = blended;
                     local30[4] = 30u;
+                    if (fixture.tessellation) local30.erase(local30.end() - 44u);
                     local30.erase(local30.begin() + 278u, local30.begin() + 282u);
                     Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(local30)).request) == EncodeBase64(blended));
                     auto reversed = upgraded;
                     reversed[278] = 1u;
                     auto main30 = reversed;
                     main30[4] = 30u;
+                    if (fixture.tessellation) main30.erase(main30.end() - 44u);
                     main30.erase(main30.begin() + 282u, main30.begin() + 322u);
                     Require(serializer.Serialize(serializer.Deserialize(EncodeBase64(main30)).request) == EncodeBase64(reversed));
                 }
@@ -430,12 +446,13 @@ int main() {
                     const auto replay25 = serializer.Deserialize(EncodeBase64(main25));
                     Require(!fixture.pixel || (replay25.request.context.pixel->layerExported == layer && replay25.request.context.pixel->ditheredAlphaToCoverage == dither && replay25.request.context.pixel->reversedBlend == 0u));
                     Require(replay25.request.target.float16DenormPreserve == preserve && (!fixture.tessellation || replay25.request.graphics->tessellation->primitiveGroupSize == 37u));
-                    main25[4] = 32u;
+                    main25[4] = 33u;
                     if (fixture.pixel) {
                         main25.insert(main25.begin() + 260u, 0u);
                         InsertPixelDefaultsAfterFrontFace(main25);
                         main25.insert(main25.begin() + 282u, 40u, 0u);
                     }
+                    if (fixture.tessellation) main25.insert(main25.end() - 35u, 1u, 0u);
                     main25.insert(main25.end(), sizeof(std::uint64_t), 0u);
                     Require(serializer.Serialize(replay25.request) == EncodeBase64(main25));
                 }
@@ -450,9 +467,9 @@ int main() {
         const auto replay = serializer.Deserialize(encoded);
         Require(replay.request.target.float16DenormPreserve == preserve);
         auto bytes = DecodeBase64(encoded);
-        Require(bytes.size() >= 8u && bytes[4] == 32u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
+        Require(bytes.size() >= 8u && bytes[4] == 33u && bytes[5] == 0u && bytes[6] == 0u && bytes[7] == 0u);
         auto future = bytes;
-        future[4] = 33u;
+        future[4] = 34u;
         bool futureRejected = false;
         try {
             static_cast<void>(serializer.Deserialize(EncodeBase64(future)));
