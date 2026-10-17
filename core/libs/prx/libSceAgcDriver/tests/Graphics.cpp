@@ -1282,7 +1282,7 @@ void BlendBypassTests() {
     Require(!bypassed.blends.at(0).blendEnable && bypassed.blends.at(0).colorWriteMask != 0, "a target with BLEND_BYPASS still blends");
 }
 
-void UnclampedNormalizedColorTests() {
+void UnclampedNormalizedColorTests(bool experimental = false) {
     using AgcDriver::Graphics::DecodeState;
     constexpr std::uint32_t blending = (1u << 30u) | 4u | (5u << 8u);
     const auto target = [](std::uint32_t info) {
@@ -1305,14 +1305,26 @@ void UnclampedNormalizedColorTests() {
     const auto pass = AgcDriver::Graphics::DecodeColorMetadataPass(eliminate);
     Require(pass.has_value() && pass->mode == AgcDriver::Graphics::ColorMetadataPass::Mode::EliminateFastClear && pass->targets.size() == 1 && pass->targets[0].format == VK_FORMAT_R8G8_UNORM, "a fast-clear eliminate over an unclamped UNORM target was refused");
     queue.context[0x1e0] = blending;
-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504)");
+    if (experimental) {
+        const auto blend = DecodeState(queue).blends.at(0);
+        Require(blend.blendEnable && blend.srcColorBlendFactor == VK_BLEND_FACTOR_SRC_ALPHA && blend.dstColorBlendFactor == VK_BLEND_FACTOR_ONE_MINUS_SRC_ALPHA && blend.colorWriteMask != 0, "experimental normalized blending changed the requested blend state");
+        queue.context[0x1e0] |= 1u << 16u;
+        const auto captured = DecodeState(queue).blends.at(0);
+        Require(captured.blendEnable && captured.srcColorBlendFactor == blend.srcColorBlendFactor && captured.dstColorBlendFactor == blend.dstColorBlendFactor, "experimental blending changed the shared-alpha blend factors");
+    } else {
+        expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented (CB_COLOR_INFO 0x0000000c, CB_BLEND0_CONTROL 0x40000504)");
+    }
     queue.context[0x31c] |= 0x10000u;
     state = DecodeState(queue);
     Require(!state.blends.at(0).blendEnable && state.blends.at(0).colorWriteMask != 0, "an unclamped UNORM target with BLEND_BYPASS was refused or blended");
     queue = target(0x0000010cu);
     Require(DecodeState(queue).colors.at(0).format == VK_FORMAT_R8G8_SNORM, "an unclamped SNORM target that does not blend was refused");
     queue.context[0x1e0] = blending;
-    expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented");
+    if (experimental) {
+        Require(DecodeState(queue).blends.at(0).blendEnable, "experimental SNORM blending was refused");
+    } else {
+        expectFailure([&] { DecodeState(queue); }, "blending unclamped normalized color is not implemented");
+    }
     queue = target(0x00000604u);
     expectFailure([&] { DecodeState(queue); }, "unclamped normalized color is unsupported");
     queue = target(0x0000800cu);
@@ -7850,6 +7862,16 @@ int main(int argc, char** argv) {
     setenv("APS5_HEAP_MIRROR_MIB", "4", 1);
 #endif
     try {
+        if (argc == 2 && std::string_view(argv[1]) == "--experimental-clamped-normalized-blend") {
+            const auto* value = std::getenv("APS5_EXPERIMENTAL_CLAMPED_NORMALIZED_BLEND");
+            Require(value != nullptr && std::string_view(value) == "1", "experimental blending test requires the explicit opt-in");
+            UnclampedNormalizedColorTests(true);
+            return 0;
+        }
+        if (argc == 2 && std::string_view(argv[1]) == "--unclamped-normalized-blend") {
+            UnclampedNormalizedColorTests();
+            return 0;
+        }
         if (argc == 2 && std::string_view(argv[1]) == "--unused-stencil-reference") {
             stencilReferenceUnusedTests();
             return 0;

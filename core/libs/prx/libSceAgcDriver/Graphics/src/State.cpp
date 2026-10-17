@@ -9,6 +9,7 @@
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include "prx/libc/include/General.hpp"
 #include <algorithm>
+#include <atomic>
 #include <bit>
 #include <bitset>
 #include <cmath>
@@ -1281,9 +1282,17 @@ State DecodeState(const QueueState& queue, bool vertexWorkgroup) {
             result.dualSourceBlend = true;
         }
         if (const auto info = read(cx, 0x31c + slot * 0xfu); state.blendEnable && (info & 0x8000u) == 0 && ((info >> 8u) & 7u) <= 1u) {
-            char detail[80];
-            std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
-            throw std::runtime_error(std::string("AGC graphics: blending unclamped normalized color is not implemented") + detail);
+            static const bool experimental = [] {
+                const auto* value = std::getenv("APS5_EXPERIMENTAL_CLAMPED_NORMALIZED_BLEND");
+                return value != nullptr && value[0] == '1' && value[1] == '\0';
+            }();
+            if (!experimental) {
+                char detail[80];
+                std::snprintf(detail, sizeof(detail), " (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)", info, slot, blend);
+                throw std::runtime_error(std::string("AGC graphics: blending unclamped normalized color is not implemented") + detail);
+            }
+            static std::atomic_bool reported{false};
+            if (!reported.exchange(true, std::memory_order_relaxed)) std::fprintf(stderr, "[gpu] EXPERIMENTAL clamped normalized blending: Vulkan clamps inputs before blending; visual results may differ (CB_COLOR_INFO 0x%08x, CB_BLEND%u_CONTROL 0x%08x)\n", info, slot, blend);
         }
         result.blends[color.exportIndex] = state;
     }
