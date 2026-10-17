@@ -3,6 +3,8 @@
 #include "prx/libSceAgcDriver/Execution/include/Driver/Diagnostics.hpp"
 #include "prx/libSceAgcDriver/Execution/include/GuestMemory.hpp"
 #include <algorithm>
+#include <atomic>
+#include <cstdio>
 #include <spirv/unified1/spirv.hpp>
 
 namespace AgcDriver::DriverDetail {
@@ -124,6 +126,10 @@ void DecodeGraphicsPrograms(DrawDecode& decoded, const QueueState& queue, const 
             const auto localAddress = programAddress(0x148);
             const auto local = !staticAbi || localAddress != 0 ? ProgramSnapshot(registry, localAddress, {3, 5}) : nullptr;
             const bool mergedHull = local != nullptr && !local->header.empty() && local->type == 3;
+            if (mergedHull && !staticAbi) {
+                static std::atomic_flag reported = ATOMIC_FLAG_INIT;
+                if (!reported.test_and_set(std::memory_order_relaxed)) std::fprintf(stderr, "[shader-type] merged hull draw decode program=0x%llx registered_type=3 local_and_hull_roles=1\n", static_cast<unsigned long long>(localAddress));
+            }
             require(graphics.stages.tessellation.has_value(), "tessellation draw has no tessellation configuration");
             graphics.stages.tessellation->mergedHull = mergedHull;
             if (mergedHull) {

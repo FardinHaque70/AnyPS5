@@ -665,6 +665,19 @@ std::shared_ptr<const ShaderSnapshot> RegisteredProgram(const ShaderRegistry& re
         require(result == nullptr || result->type == snapshot->type, "registered program has ambiguous shader binary types");
         result = snapshot;
     }
+    if (registered && result == nullptr) {
+        std::ostringstream diagnostic;
+        diagnostic << "[shader-type] incompatible registered program address=0x" << std::hex << address << " expected=";
+        for (const auto type : types) diagnostic << std::dec << static_cast<unsigned>(type) << ',';
+        for (const auto& snapshot : found->second) {
+            if (address - snapshot->codeAddress >= snapshot->code.size() * sizeof(std::uint32_t)) continue;
+            diagnostic << " candidate{type=" << std::dec << static_cast<unsigned>(snapshot->type)
+                       << " code=0x" << std::hex << snapshot->codeAddress
+                       << " header=0x" << snapshot->headerAddress
+                       << " words=" << std::dec << snapshot->code.size() << '}';
+        }
+        std::fprintf(stderr, "%s\n", diagnostic.str().c_str());
+    }
     require(!registered || result != nullptr, "registered program refers to an incompatible shader binary type");
     return result;
 }
