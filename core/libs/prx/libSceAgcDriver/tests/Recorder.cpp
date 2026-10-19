@@ -8571,29 +8571,11 @@ void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
         };
         auto image = CachedStorageSurface(context, resource);
         std::shared_ptr<Texture> firstView, firstClear;
-        const auto elementBytes = format == 29u ? 4u : 8u;
-        const auto linearBytes = static_cast<std::size_t>(resource.width) * resource.height * elementBytes;
+        SampleProgram program(context, recorder);
         const auto check = [&](const std::shared_ptr<Texture>& texture, bool clear) {
-            Buffer readback(context, linearBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
-            const auto commands = recorder.Commands();
             recorder.Keep(texture);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
-            VkBufferImageCopy copy{};
-            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
-            copy.imageExtent = {resource.width, resource.height, 1};
-            context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, texture->Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
-            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
-            recorder.Submit();
-            device.WaitQueue();
-            recorder.Sync();
-            const auto pixels = readback.Bytes();
-            for (std::size_t at = 0; at < pixels.size(); at += 2u) {
-                std::uint16_t actual;
-                std::memcpy(&actual, pixels.data() + at, 2u);
-                const auto channel = at % elementBytes / 2u;
-                const auto expected = !clear && (channel == 0u || channel == 3u) ? 0x3c00u : 0u;
-                Require(actual == expected, "alternating clear/view reuse changed a GPU texel");
-            }
+            expectRed(program.Red(texture->View(), texture->Layout(), 0.0f), clear ? 0.0f : 1.0f,
+                "alternating clear/view reuse changed the sampled GPU texel");
         };
         const auto before = SampledCacheCounters();
         const auto started = std::chrono::steady_clock::now();
@@ -8626,7 +8608,7 @@ void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
         const auto made = SampledCacheCounters().made - before.made;
         Require(made == (legacy ? cycles : 1u), "clear/view reuse made an unexpected number of snapshots");
         const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
-        std::printf("clear/view reuse: %ux%u format=%u cycles=%u snapshots=%llu legacy=%u elapsed_ms=%.3f pixels=exact\n", resource.width, resource.height, format, cycles, static_cast<unsigned long long>(made), legacy ? 1u : 0u, elapsed);
+        std::printf("clear/view reuse: %ux%u format=%u cycles=%u snapshots=%llu legacy=%u elapsed_ms=%.3f sampled_red=exact\n", resource.width, resource.height, format, cycles, static_cast<unsigned long long>(made), legacy ? 1u : 0u, elapsed);
     }
 }
 
