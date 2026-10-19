@@ -111,6 +111,12 @@ public:
             auto* regionMapping = mmap(reinterpret_cast<void*>(block.begin), block.end - block.begin, PROT_READ | PROT_WRITE,
                 MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
             if (regionMapping != MAP_FAILED) block.data = static_cast<std::uint8_t*>(regionMapping);
+            else if (GuestArena::GuestArenaAvailable_nid_postfix() && GuestArena::GuestArenaContains_nid_postfix(reinterpret_cast<void*>(block.begin), block.end - block.begin)) {
+                GuestArena::GuestArenaMarkUsed_nid_postfix(reinterpret_cast<void*>(block.begin), block.end - block.begin);
+                GuestArena::GuestArenaCommit_nid_postfix(reinterpret_cast<void*>(block.begin), block.end - block.begin, 0x04, Granule);
+                block.data = reinterpret_cast<std::uint8_t*>(block.begin);
+                block.borrowed = true;
+            }
 #endif
             if (block.data == nullptr || reinterpret_cast<std::uint64_t>(block.data) != block.begin) {
                 std::fprintf(stderr, "request bench: cannot map guest range 0x%llx-0x%llx at its address\n", static_cast<unsigned long long>(block.begin), static_cast<unsigned long long>(block.end));
