@@ -1,3 +1,56 @@
+# Ghost of Yōtei: Linux bring-up
+
+This fork tracks [Celegans12's Yōtei branch](https://github.com/Celegans12/AnyPS5/tree/yotei/best), based here on [`08a3113cfa7b`](https://github.com/Celegans12/AnyPS5/commit/08a3113cfa7bdd609704133974012d5c9a5ea6ab). Its shader, bindless-texture and scheduling work remains the base. Local changes address demonstrated Linux compatibility needs and retain their upstream provenance.
+
+**Verified local status, 19 October 2026:** the Linux build succeeds, the game creates a window and presents frames, and the ATRAC9 vibration-audio startup crash is resolved by porting the existing upstream fix. A controllable main menu and gameplay have not been verified locally. The ongoing run is still preparing shaders; passing the audio blocker does not establish a complete memory or loading-performance solution.
+
+## Linux test setup
+
+| Component | Tested configuration |
+|---|---|
+| Game | Ghost of Yōtei, PPSA26344, version 02.002.000 |
+| OS | CachyOS Linux, kernel 7.2.9-2-cachyos |
+| CPU / RAM | AMD Ryzen 7 5800X, 32 GB RAM |
+| GPU | NVIDIA GeForce RTX 4080, 16 GB VRAM |
+| Driver | NVIDIA 615.78.08 |
+| Build | GCC 16.2.1, CMake Release |
+| Controller | DualSense detected over USB; input in a controllable menu remains unverified |
+| Data / state | SSD game assets; separate writable test state, caches and immutable runtime libraries |
+| Tested runtime source | [`fe8539fd7c23`](https://github.com/FardinHaque70/AnyPS5/commit/fe8539fd7c23490eb0f55f2ad70ac264bc644225); later README-only commits do not change that runtime |
+
+Build and conversion follow the existing [build instructions](docs/dev/BUILD.md). The local trial uses all eight settings recommended by Celegans for this base:
+
+```sh
+APS5_SPANNED_WAVE=1 APS5_BINDLESS_IMAGES=1 APS5_BINDLESS_LAZY=1 APS5_NO_RESULT_MEMO=1 \
+APS5_STAGING_DIFF=1 APS5_PIPELINE_INDIRECT=1 APS5_NO_ADDRESS_DRAW_REUSE=1 APS5_ASYNC_LANE=51 \
+./app.elf
+```
+
+Run this from the prepared game's directory, after conversion and library setup. `APS5_BINDLESS_LAZY` controls texture handling. `APS5_LAZY_SHADER_PREPARE` was unset in this trial, so frontend shader preparation retains the fork's eager/background policy. Compatible frontend and Vulkan caches are preserved and reused; older caches from a different compiler generation are kept separate. The tested shader-cache generation is `e9e506ada4afe148`, format 47.
+
+Local live-log tooling and run evidence are maintained outside this source checkout. The development trial runs without an automatic timeout or per-run RAM/swap limit; that is a description of this experiment, not a requirement for using the fork.
+
+## Local compatibility changes and credit
+
+- **Linux cache-layout guards** — [`823d3021cbc5`](https://github.com/FardinHaque70/AnyPS5/commit/823d3021cbc532639efcc1b2848689789034f86e), branch [`fix/linux-shader-cache-layout`](https://github.com/FardinHaque70/AnyPS5/tree/fix/linux-shader-cache-layout): correct four stale Linux/libstdc++ size assertions after the base added bindless and element-flag fields. The explicit codec already carried these fields. Bindless and spilled-flag roundtrip coverage was extended; serialized format and shader behavior were preserved.
+- **ATRAC9 vibration decoding** — branch [`fix/yotei-atrac9-vibration`](https://github.com/FardinHaque70/AnyPS5/tree/fix/yotei-atrac9-vibration): port of **[JJenkx's existing upstream PR #6721](https://github.com/boykopovar/AnyPS5/pull/6721)**, reviewed at [`e7ebd9df1eb3`](https://github.com/boykopovar/AnyPS5/commit/e7ebd9df1eb3d4ca94d7de1655605407fa784c59). Original authorship and cherry-pick provenance are retained, including unsupported-encoding validation and multi-rate tests. Its [vgmstream decoder](https://github.com/vgmstream/vgmstream/tree/7c520e8f9b078dfde2f84f1b5bcbad0c6c415806) and license are retained. This is integration and Linux validation of that fix, not a separate decoder implementation.
+
+On the guard-corrected base, audio configuration `fe 7e 03 f0` is rejected and the native game exits with SIGFPE; the kernel trap and executable disassembly identify an integer divide by zero. A focused same-configuration CPU comparison also rejects this configuration against the original fork library and accepts it against the audio-fixed control. With the port, the native game accepts two channels at 48 kHz, with a 128-byte superframe containing four frames of 256 samples, and proceeds beyond the previous crash point.
+
+Validation on the ported source: full runtime libraries and relinker build passed; all five affected audio checks passed; 27 packaging checks completed with three platform-specific skips and no failures; conventions and whitespace checks passed. The guard-only build also passed focused cache-codec, pipeline-creation-gate and RTX 4080 bindless-startup checks. These are focused checks, not a claim that the entire repository suite or every rendering path passed.
+
+No whole-game speedup, memory plateau, audio quality, physical haptic output or gameplay result is established by these tests. Integration, diagnostics and documentation were AI-assisted.
+
+## Development direction
+
+Keep this base current, review relevant upstream changes before adding local work, and retire local patches when equivalent fixes land. Performance claims require matched source, scene, driver and cache conditions. Reproducible findings and focused patches can be contributed with their original attribution; ongoing hypotheses are not presented as verified fixes.
+
+---
+
+## Inherited Celegans branch documentation
+
+The material below is retained from Celegans12's pinned branch. Its screenshots, Windows setup, frame rates and open-world results are **Celegans' reported results**, not results reproduced by this Linux fork. The original AnyPS5 project documentation follows it.
+
 <h1 align="center">Ghost of Yōtei on AnyPS5</h1>
 
 <p align="center"><b>A test branch of <a href="https://github.com/boykopovar/AnyPS5">AnyPS5</a> that runs Ghost of Yōtei (PPSA26344) into the open world.</b><br>
