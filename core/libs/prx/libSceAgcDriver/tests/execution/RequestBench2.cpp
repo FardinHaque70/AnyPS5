@@ -26,6 +26,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+#else
+#include <sys/mman.h>
 #endif
 #include <algorithm>
 #include <chrono>
@@ -105,6 +107,10 @@ public:
                     block.borrowed = true;
                 }
             }
+#else
+            auto* regionMapping = mmap(reinterpret_cast<void*>(block.begin), block.end - block.begin, PROT_READ | PROT_WRITE,
+                MAP_PRIVATE | MAP_ANONYMOUS | MAP_FIXED_NOREPLACE, -1, 0);
+            if (regionMapping != MAP_FAILED) block.data = static_cast<std::uint8_t*>(regionMapping);
 #endif
             if (block.data == nullptr || reinterpret_cast<std::uint64_t>(block.data) != block.begin) {
                 std::fprintf(stderr, "request bench: cannot map guest range 0x%llx-0x%llx at its address\n", static_cast<unsigned long long>(block.begin), static_cast<unsigned long long>(block.end));
@@ -137,6 +143,9 @@ public:
     ExtraRange() {
 #ifdef _WIN32
         block = VirtualAlloc(nullptr, 0x20000u, MEM_RESERVE | MEM_COMMIT, PAGE_READWRITE);
+#else
+        block = mmap(nullptr, 0x20000u, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+        if (block == MAP_FAILED) throw std::runtime_error("cannot allocate an extra BDA range");
 #endif
         GuestAllocations::Mutation().Add(block, 0x10000u, true, true, true);
     }
@@ -144,6 +153,8 @@ public:
         GuestAllocations::Mutation().Remove(block);
 #ifdef _WIN32
         VirtualFree(block, 0, MEM_RELEASE);
+#else
+        munmap(block, 0x20000u);
 #endif
     }
 
@@ -204,7 +215,9 @@ int main(int argc, char** argv) {
             std::this_thread::sleep_for(std::chrono::seconds(limit));
             std::fprintf(stderr, "request bench: exceeded %u s, exiting without waiting for the device\n", limit);
             std::fflush(stderr);
+#ifdef _WIN32
             TerminateProcess(GetCurrentProcess(), 3);
+#endif
             std::_Exit(3);
         }).detach();
         auto request = ShaderRecompiler::RequestSerializer{}.Deserialize(ReadText(argv[1]));
@@ -554,7 +567,9 @@ int main(int argc, char** argv) {
         }
         std::fflush(stdout);
         std::fflush(nullptr);
-        TerminateProcess(GetCurrentProcess(), 0);  // no DLL detach: ExitProcess after APS5_PROFILE_GPU hung in teardown
+#ifdef _WIN32
+        TerminateProcess(GetCurrentProcess(), 0);
+#endif
         std::_Exit(0);
     } catch (const std::exception& error) {
         std::cerr << "request bench: " << error.what() << '\n';
