@@ -8522,13 +8522,14 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
-void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
+void clearViewReuseTests(const Device& device, Recorder& recorder, bool large, bool flushed) {
     const auto& base = device.GetContext();
     Require(base.hostImportAlignment != 0 && base.hostImportAlignment <= 65536, "clear/view reuse requires host imports");
     TextureDetiler detiler(base);
     auto context = base;
     context.detiler = &detiler;
     const bool legacy = std::getenv("APS5_NO_CLEAR_TEXTURE_CACHE") != nullptr;
+    std::vector<std::shared_ptr<std::uint8_t>> allocations;
     for (const std::uint32_t format : {29u, 71u}) {
         GuestTextureResource resource{};
         resource.width = large ? 3840u : 128u;
@@ -8545,6 +8546,7 @@ void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
         const auto allocationBytes = ((surfaceBytes + surfaceBytes / 256u + 65535u) / 65536u) * 65536u;
         auto* block = static_cast<std::uint8_t*>(AllocateWatched(allocationBytes, 65536));
         Require(block != nullptr, "cannot allocate clear/view reuse surface");
+        allocations.emplace_back(block, [allocationBytes](std::uint8_t* value) { ReleaseWatched(value, allocationBytes); });
         GuestAllocations::Mutation().Add(block, allocationBytes, true, true, true);
         struct Release {
             const Context& context;
@@ -8554,7 +8556,6 @@ void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
                 ClearCachedTextures(context.device);
                 GuestAllocations::Mutation().Remove(block);
                 HostImportFor(context, reinterpret_cast<std::uintptr_t>(block), bytes);
-                ReleaseWatched(block, bytes);
             }
         } release{context, block, allocationBytes};
         resource.baseAddress = reinterpret_cast<std::uintptr_t>(block);
@@ -8593,8 +8594,9 @@ void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
             const auto view = CachedTableTexture(context, words, resource, surfaceBytes, false);
             Require(view->ViewsStorageImage(), "the pending image was not sampled through a view");
             check(view, false);
+            if (flushed) Require(StorageTexture::FlushPending(resource.baseAddress, surfaceBytes, nullptr, "clear/view reuse"), "the image was not published before the clear");
             std::memset(block + surfaceBytes, 0x00, keyBytes);
-            Require(StorageTexture::NoteKeysFill(resource.dccAddress, keyBytes, 0x00) == 1u, "clear keys did not cover the pending image");
+            if (!flushed) Require(StorageTexture::NoteKeysFill(resource.dccAddress, keyBytes, 0x00) == 1u, "clear keys did not cover the pending image");
             const auto cleared = CachedTableTexture(context, words, resource, surfaceBytes, false);
             Require(!cleared->ViewsStorageImage(), "clear keys sampled the earlier pending image");
             check(cleared, true);
@@ -9126,8 +9128,9 @@ int main(int argc, char** argv) {
             integerClearTests(device);
             return 0;
         }
-        if (argc == 2 && (std::string_view(argv[1]) == "--clear-view-reuse-only" || std::string_view(argv[1]) == "--clear-view-reuse-large-only")) {
-            clearViewReuseTests(device, recorder, std::string_view(argv[1]) == "--clear-view-reuse-large-only");
+        if (argc == 2 && (std::string_view(argv[1]) == "--clear-view-reuse-only" || std::string_view(argv[1]) == "--clear-view-reuse-large-only" || std::string_view(argv[1]) == "--clear-view-reuse-flushed-only" || std::string_view(argv[1]) == "--clear-view-reuse-flushed-large-only")) {
+            const std::string_view mode(argv[1]);
+            clearViewReuseTests(device, recorder, mode.find("large") != std::string_view::npos, mode.find("flushed") != std::string_view::npos);
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--settled-baseline-only") {

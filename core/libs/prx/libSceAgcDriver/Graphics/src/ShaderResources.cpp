@@ -1289,7 +1289,7 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     auto& cache = Textures();
     auto key = MakeTextureKey(context.device, words, components, depthCompare);
     static const bool clearCacheDisabled = std::getenv("APS5_NO_CLEAR_TEXTURE_CACHE") != nullptr;
-    if (clearThroughKeys && !clearCacheDisabled) key.clearKeys = *keys;
+    if (source == nullptr && IsDccClear(*keys) && *keys != DccKeys::ClearRegister && !clearCacheDisabled) key.clearKeys = *keys;
     const DropReleasedDependents dropAfterUnlock;
     const SampledCacheLock lock(cache);
     dropUncachedViews(cache);
