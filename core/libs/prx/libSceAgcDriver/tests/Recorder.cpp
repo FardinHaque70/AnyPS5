@@ -8542,7 +8542,7 @@ void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
         resource.dstSelZ = 6;
         resource.dstSelW = 7;
         const auto surfaceBytes = DescribeSurface(resource).guestBytes;
-        const auto allocationBytes = ((surfaceBytes + 65535u) / 65536u + 1u) * 65536u;
+        const auto allocationBytes = ((surfaceBytes + surfaceBytes / 256u + 65535u) / 65536u) * 65536u;
         auto* block = static_cast<std::uint8_t*>(AllocateWatched(allocationBytes, 65536));
         Require(block != nullptr, "cannot allocate clear/view reuse surface");
         GuestAllocations::Mutation().Add(block, allocationBytes, true, true, true);
