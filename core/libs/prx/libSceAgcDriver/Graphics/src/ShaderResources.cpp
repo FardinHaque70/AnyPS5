@@ -80,6 +80,7 @@ struct TextureKey {
     std::array<std::uint32_t, 8> words;
     std::array<std::uint32_t, 4> components;
     bool depthCompare = false;
+    DccKeys clearKeys = DccKeys::Uncompressed;
     bool operator==(const TextureKey&) const = default;
 };
 
@@ -92,6 +93,7 @@ struct TextureKeyHash {
     std::size_t operator()(const TextureKey& key) const noexcept {
         auto hash = 14695981039346656037ull ^ reinterpret_cast<std::uintptr_t>(key.device);
         hash = hashWords(hash, key.words.data(), key.words.size()) ^ static_cast<std::uint64_t>(key.depthCompare);
+        hash = (hash ^ static_cast<std::uint64_t>(key.clearKeys)) * 1099511628211ull;
         return static_cast<std::size_t>(hashWords(hash, key.components.data(), key.components.size()));
     }
 };
@@ -1285,7 +1287,9 @@ std::shared_ptr<Texture> cachedTexture(const Context& context, std::span<const s
     }
     const auto untracked = source == nullptr && generation == 0 && !committed.has_value() && *keys == DccKeys::Uncompressed ? untrackedKey(address, bytes) : std::array<std::uint64_t, 4>{};
     auto& cache = Textures();
-    const auto key = MakeTextureKey(context.device, words, components, depthCompare);
+    auto key = MakeTextureKey(context.device, words, components, depthCompare);
+    static const bool clearCacheDisabled = std::getenv("APS5_NO_CLEAR_TEXTURE_CACHE") != nullptr;
+    if (clearThroughKeys && !clearCacheDisabled) key.clearKeys = *keys;
     const DropReleasedDependents dropAfterUnlock;
     const SampledCacheLock lock(cache);
     dropUncachedViews(cache);

@@ -4244,7 +4244,9 @@ bool writtenBufferOrderTests(const Device& device, Recorder& recorder) {
             const auto commands = recorder.Commands();
             recorder.Keep(image);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
             context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &red, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
             RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT);
             image->MarkDirty();
         }
@@ -8520,6 +8522,114 @@ void keysFillTests(const Device& device, Recorder& recorder) {
     recorder.Sync();
 }
 
+void clearViewReuseTests(const Device& device, Recorder& recorder, bool large) {
+    const auto& base = device.GetContext();
+    Require(base.hostImportAlignment != 0 && base.hostImportAlignment <= 65536, "clear/view reuse requires host imports");
+    TextureDetiler detiler(base);
+    auto context = base;
+    context.detiler = &detiler;
+    const bool legacy = std::getenv("APS5_NO_CLEAR_TEXTURE_CACHE") != nullptr;
+    for (const std::uint32_t format : {29u, 71u}) {
+        GuestTextureResource resource{};
+        resource.width = large ? 3840u : 128u;
+        resource.height = large ? 2160u : 128u;
+        resource.mipCount = 1;
+        resource.tileMode = TextureTileMode::kR64KBX;
+        resource.dimension = TextureDimension::k2D;
+        resource.format = format;
+        resource.dstSelX = 4;
+        resource.dstSelY = 5;
+        resource.dstSelZ = 6;
+        resource.dstSelW = 7;
+        const auto surfaceBytes = DescribeSurface(resource).guestBytes;
+        const auto allocationBytes = ((surfaceBytes + 65535u) / 65536u + 1u) * 65536u;
+        auto* block = static_cast<std::uint8_t*>(AllocateWatched(allocationBytes, 65536));
+        Require(block != nullptr, "cannot allocate clear/view reuse surface");
+        GuestAllocations::Mutation().Add(block, allocationBytes, true, true, true);
+        struct Release {
+            const Context& context;
+            std::uint8_t* block;
+            std::size_t bytes;
+            ~Release() {
+                ClearCachedTextures(context.device);
+                GuestAllocations::Mutation().Remove(block);
+                HostImportFor(context, reinterpret_cast<std::uintptr_t>(block), bytes);
+                ReleaseWatched(block, bytes);
+            }
+        } release{context, block, allocationBytes};
+        resource.baseAddress = reinterpret_cast<std::uintptr_t>(block);
+        resource.dccAddress = resource.baseAddress + surfaceBytes;
+        const auto keyBytes = surfaceBytes / 256u;
+        std::memset(block, 0x55, surfaceBytes);
+        std::memset(block + surfaceBytes, 0xff, keyBytes);
+        Require(HostImportFor(context, resource.baseAddress, allocationBytes) != nullptr, "clear/view surface import was refused");
+        const std::array<std::uint32_t, 8> words{
+            static_cast<std::uint32_t>(resource.baseAddress >> 8u),
+            static_cast<std::uint32_t>(resource.baseAddress >> 40u) | (format << 20u),
+            resource.width | (resource.height << 16u), 0xfacu, 0u, 0u,
+            static_cast<std::uint32_t>(resource.dccAddress >> 8u), 0u
+        };
+        auto image = CachedStorageSurface(context, resource);
+        std::shared_ptr<Texture> firstView, firstClear;
+        const auto elementBytes = format == 29u ? 4u : 8u;
+        const auto linearBytes = static_cast<std::size_t>(resource.width) * resource.height * elementBytes;
+        const auto check = [&](const std::shared_ptr<Texture>& texture, bool clear) {
+            Buffer readback(context, linearBytes, VK_BUFFER_USAGE_TRANSFER_DST_BIT);
+            const auto commands = recorder.Commands();
+            recorder.Keep(texture);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT);
+            VkBufferImageCopy copy{};
+            copy.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+            copy.imageExtent = {resource.width, resource.height, 1};
+            context.Function<PFN_vkCmdCopyImageToBuffer>("vkCmdCopyImageToBuffer")(commands, texture->Image(), VK_IMAGE_LAYOUT_GENERAL, readback.Handle(), 1, &copy);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_HOST_READ_BIT);
+            recorder.Submit();
+            device.WaitQueue();
+            recorder.Sync();
+            const auto pixels = readback.Bytes();
+            for (std::size_t at = 0; at < pixels.size(); at += 2u) {
+                std::uint16_t actual;
+                std::memcpy(&actual, pixels.data() + at, 2u);
+                const auto channel = at % elementBytes / 2u;
+                const auto expected = !clear && (channel == 0u || channel == 3u) ? 0x3c00u : 0u;
+                Require(actual == expected, "alternating clear/view reuse changed a GPU texel");
+            }
+        };
+        const auto before = SampledCacheCounters();
+        const auto started = std::chrono::steady_clock::now();
+        constexpr unsigned cycles = 8;
+        for (unsigned frame = 0; frame < cycles; ++frame) {
+            image->Refresh();
+            const auto commands = recorder.Commands();
+            const VkClearColorValue red{{1.0f, 0.0f, 0.0f, 1.0f}};
+            const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+            recorder.Keep(image);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_ACCESS_SHADER_WRITE_BIT | VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT);
+            context.Function<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(commands, image->Image(), VK_IMAGE_LAYOUT_GENERAL, &red, 1, &range);
+            RecordMemoryBarrier(context, commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_SHADER_READ_BIT | VK_ACCESS_TRANSFER_READ_BIT);
+            image->MarkDirty();
+            const auto view = CachedTableTexture(context, words, resource, surfaceBytes, false);
+            Require(view->ViewsStorageImage(), "the pending image was not sampled through a view");
+            check(view, false);
+            std::memset(block + surfaceBytes, 0x00, keyBytes);
+            Require(StorageTexture::NoteKeysFill(resource.dccAddress, keyBytes, 0x00) == 1u, "clear keys did not cover the pending image");
+            const auto cleared = CachedTableTexture(context, words, resource, surfaceBytes, false);
+            Require(!cleared->ViewsStorageImage(), "clear keys sampled the earlier pending image");
+            check(cleared, true);
+            if (frame == 0) {
+                firstView = view;
+                firstClear = cleared;
+            } else if (!legacy) {
+                Require(view == firstView && cleared == firstClear, "clear and view replaced each other in the sampled cache");
+            }
+        }
+        const auto made = SampledCacheCounters().made - before.made;
+        Require(made == (legacy ? cycles : 1u), "clear/view reuse made an unexpected number of snapshots");
+        const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - started).count();
+        std::printf("clear/view reuse: %ux%u format=%u cycles=%u snapshots=%llu legacy=%u elapsed_ms=%.3f pixels=exact\n", resource.width, resource.height, format, cycles, static_cast<unsigned long long>(made), legacy ? 1u : 0u, elapsed);
+    }
+}
+
 void integerClearTests(const Device& device) {
     const auto& context = device.GetContext();
     std::size_t tested = 0;
@@ -9032,6 +9142,10 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--integer-clear-only") {
             integerClearTests(device);
+            return 0;
+        }
+        if (argc == 2 && (std::string_view(argv[1]) == "--clear-view-reuse-only" || std::string_view(argv[1]) == "--clear-view-reuse-large-only")) {
+            clearViewReuseTests(device, recorder, std::string_view(argv[1]) == "--clear-view-reuse-large-only");
             return 0;
         }
         if (argc == 2 && std::string_view(argv[1]) == "--settled-baseline-only") {
