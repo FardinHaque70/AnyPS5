@@ -3916,14 +3916,13 @@ void verifyMergedHullConfiguration() {
     require(replay.request.graphics.has_value() && replay.request.graphics->tessellation.has_value() && replay.request.graphics->tessellation->mergedHull, "a merged hull configuration was lost in serialization");
     require(!serializer.Deserialize(separate).request.graphics->tessellation->mergedHull, "a separate hull configuration was read as merged");
     auto legacy = decodeBase64(merged);
-    require(legacy.size() > 45u && legacy[legacy.size() - 45u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
-    legacy.erase(legacy.end() - 45);
+    require(legacy.size() > 44u && legacy[legacy.size() - 44u] == 1u, "the merged hull flag is not the last byte of the tessellation configuration");
+    legacy.erase(legacy.end() - 44);
     for (const auto version : {30u, 31u, 32u}) {
         auto older = legacy;
         older[4] = static_cast<std::uint8_t>(version);
-        if (version < 32u) older.pop_back();
         const auto upgraded = serializer.Deserialize(encodeBase64(older));
-        const auto what = "a main version " + std::to_string(version) + " tessellation request";
+        const auto what = "a fork version " + std::to_string(version) + " tessellation request";
         require(upgraded.request.graphics.has_value() && upgraded.request.graphics->tessellation.has_value() && !upgraded.request.graphics->tessellation->mergedHull, (what + " read a merged hull flag").c_str());
         require(serializer.Serialize(upgraded.request) == separate, (what + " misread the fields after its tessellation configuration").c_str());
     }
