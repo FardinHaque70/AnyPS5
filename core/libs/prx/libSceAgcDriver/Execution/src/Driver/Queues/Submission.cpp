@@ -385,7 +385,19 @@ void Driver::Submit(const Packet* packet, std::uint32_t queue) {
         std::lock_guard lock(mutex);
         registry = shaders;
     }
-    if (registry != nullptr) AwaitReferencedPreparations(*registry, ReferencedPrograms(submission.commands, submission.registerLists));
+    if (registry != nullptr) {
+        PerformanceContext context(FrameTiming::Preparation());
+        PerformanceTimer timing("Shader.SubmitReferencedPreparation");
+        const auto addresses = ReferencedPrograms(submission.commands, submission.registerLists);
+        timing.Mark("scan");
+        const auto waiting = profile ? std::chrono::steady_clock::now() : std::chrono::steady_clock::time_point{};
+        AwaitReferencedPreparations(*registry, addresses);
+        timing.Mark("wait");
+        if (profile) {
+            const auto elapsed = std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - waiting).count();
+            if (elapsed >= 100.0) std::fprintf(stderr, "[shader-submit-wait] %.1f queue=0x%x referenced_programs=%zu elapsed_ms=%.3f policy=referenced\n", TraceMs(), queue, addresses.size(), elapsed);
+        }
+    }
     if (APS5_ENABLE_TIMING_LOG) submission.roomReadyAt = std::chrono::steady_clock::now();
     static const bool trace = std::getenv("APS5_TRACE_GPU") != nullptr;
     if (trace) std::fprintf(stderr, "[gpu] %.1f submit queue=0x%x dwords=%zu at %p\n", TraceMs(), queue, submission.commands.size(), static_cast<const void*>(descriptor.addr));

@@ -316,8 +316,11 @@ bool RawGraphicsDrawnIn(std::uint64_t begin, std::uint64_t end) {
 namespace {
 
 void AwaitRegisteredPreparation(PreparedShaders& prepared, std::unique_lock<std::mutex>& lock) {
-    if (prepared.pending) PrioritizeRegistrationPreparation(prepared);
-    prepared.settled.wait(lock, [&] { return !prepared.pending; });
+    if (prepared.pending) {
+        PerformanceTimer timing("Shader.FirstUsePreparationWait");
+        PrioritizeRegistrationPreparation(prepared);
+        prepared.settled.wait(lock, [&] { return !prepared.pending; });
+    }
     if (prepared.failure != nullptr) std::rethrow_exception(prepared.failure);
 }
 
@@ -667,8 +670,11 @@ std::shared_ptr<const ShaderSnapshot> RegisteredProgram(const ShaderRegistry& re
 }
 
 void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const std::shared_ptr<const ShaderSnapshot>& snapshot) {
+    PerformanceContext context(PerformanceContext::Current() != nullptr ? PerformanceContext::Current() : FrameTiming::Preparation());
+    PerformanceTimer timing("Shader.PublishRegistry");
     ShaderPreparationTransaction transaction;
     transaction.Hold();
+    timing.Mark("transaction");
     auto published = snapshot;
     if (registry != nullptr) {
         const auto found = registry->find(snapshot->codeAddress);
@@ -685,11 +691,15 @@ void PublishRegisteredShader(std::shared_ptr<ShaderRegistry>& registry, const st
             }
         }
     }
+    timing.Mark("lookup");
     auto next = registry != nullptr ? std::make_shared<ShaderRegistry>(*registry) : std::make_shared<ShaderRegistry>();
+    timing.Mark("copy");
     auto& headers = (*next)[snapshot->codeAddress];
     std::erase_if(headers, [&](const auto& current) { return current->headerAddress == snapshot->headerAddress || current->code != snapshot->code; });
     headers.push_back(published);
+    timing.Mark("mutate");
     registry = std::move(next);
+    timing.Mark("retire");
     transaction.Commit();
 }
 
