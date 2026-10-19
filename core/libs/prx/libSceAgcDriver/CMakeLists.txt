@@ -1524,6 +1524,15 @@ target_link_libraries(agc_driver_graphics_tests PRIVATE
 
 set_target_properties(agc_driver_graphics_tests PROPERTIES CXX_EXTENSIONS OFF)
 configure_windows_unwind(agc_driver_graphics_tests)
+if(BUILD_TESTING)
+    add_test(NAME agc_driver_unclamped_blend_strict COMMAND agc_driver_graphics_tests --unclamped-normalized-blend)
+    add_test(NAME agc_driver_unclamped_blend_invalid_opt_in COMMAND agc_driver_graphics_tests --unclamped-normalized-blend)
+    add_test(NAME agc_driver_unclamped_blend_experimental COMMAND agc_driver_graphics_tests --experimental-clamped-normalized-blend)
+    set_tests_properties(agc_driver_unclamped_blend_strict PROPERTIES ENVIRONMENT "APS5_EXPERIMENTAL_CLAMPED_NORMALIZED_BLEND=0")
+    set_tests_properties(agc_driver_unclamped_blend_invalid_opt_in PROPERTIES ENVIRONMENT "APS5_EXPERIMENTAL_CLAMPED_NORMALIZED_BLEND=1extra")
+    set_tests_properties(agc_driver_unclamped_blend_experimental PROPERTIES ENVIRONMENT "APS5_EXPERIMENTAL_CLAMPED_NORMALIZED_BLEND=1")
+endif()
+
 
 foreach(agcVertexRangeShader IN ITEMS VertexRange.vert VertexRangeProducer.frag)
     string(REPLACE "." "_" agcVertexRangeName "${agcVertexRangeShader}")
