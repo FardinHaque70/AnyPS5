@@ -95,6 +95,7 @@ void requireSameArtifact(const CompiledShaderArtifact& left, const CompiledShade
     require(left.stencilReferences == right.stencilReferences, prefix + "stencil reference set differs");
     require(left.stencilReplaySafe == right.stencilReplaySafe, prefix + "stencil replay proof differs");
     require(left.stencilReferenceDword == right.stencilReferenceDword, prefix + "stencil replay push offset differs");
+    require(left.bindlessHeap == right.bindlessHeap, prefix + "bindless heap flag differs");
     require(left.fragmentParameters.size() == right.fragmentParameters.size(), prefix + "fragment parameter count differs");
     for (std::size_t i = 0; i < left.fragmentParameters.size(); ++i) {
         const auto& a = left.fragmentParameters[i];
@@ -116,6 +117,7 @@ void requireSameResult(const RecompileResult& left, const RecompileResult& right
     require(left.shaderDataUserWords == right.shaderDataUserWords, prefix + "shader-data user words differ");
     require(left.imageTableRanges == right.imageTableRanges && left.imageTableShader == right.imageTableShader && left.imageTableFaults == right.imageTableFaults && left.imageTablePoison.size() == right.imageTablePoison.size(), prefix + "image table invocation data differs");
     require(left.imageTableReadRanges == right.imageTableReadRanges, prefix + "image table read ranges differ");
+    require(left.bindlessTables == right.bindlessTables, prefix + "bindless table registrations differ");
     for (std::size_t i = 0; i < left.imageTablePoison.size(); ++i) {
         const auto& a = left.imageTablePoison[i];
         const auto& b = right.imageTablePoison[i];
@@ -381,6 +383,20 @@ void verifyResultRoundTrip() {
         ShaderDiskCache::EncodeResult(incompatible, bytes);
         require(!ShaderDiskCache::DecodeResult(bytes, decoded), "an incompatible runtime ABI " + std::to_string(abi) + " result decodes");
     }
+}
+
+void verifyBindlessResultRoundTrip() {
+    auto result = sampleResult();
+    result.bindlessHeap = true;
+    result.bindlessTables = {{0x5001234000ull, 7u, 32u, {{0x9876543210ull, 2u, {1u, 2u, 3u, 4u}}}, 8u}};
+    result.bindings[0].bufferRead.assign(70u, false);
+    result.bindings[0].bufferRead[63u] = true;
+    result.bindings[0].bufferRead[69u] = true;
+    std::vector<std::byte> bytes;
+    ShaderDiskCache::EncodeResult(result, bytes);
+    RecompileResult decoded;
+    require(ShaderDiskCache::DecodeResult(bytes, decoded), "bindless result does not decode");
+    requireSameResult(result, decoded, "bindless result round trip");
 }
 
 void verifyElementFlags() {
@@ -2938,6 +2954,7 @@ int main(int argc, char** argv) {
         }
         if (argc == 2 && std::string_view(argv[1]) == "--artifact-codec") {
             verifyResultRoundTrip();
+            verifyBindlessResultRoundTrip();
             verifyEntryRoundTrip();
             std::cout << "artifact codec tests passed\n";
             return 0;
@@ -2959,6 +2976,7 @@ int main(int argc, char** argv) {
         setEnvironment("ANYPS5_SHADER_CACHE_DIR", directory.string());
         verifyAtomicReplacement(directory);
         verifyResultRoundTrip();
+        verifyBindlessResultRoundTrip();
         verifyElementFlags();
         verifyEntryRoundTrip();
         verifyPrebuiltPack(directory / "packs");
